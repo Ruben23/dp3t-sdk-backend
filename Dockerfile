@@ -4,11 +4,7 @@ FROM ubuntu
 RUN apt-get -y update  && apt-get install default-jre default-jdk openjdk-8-jdk  maven -y
 
 WORKDIR /code
-
-
-ADD dpppt-backend-sdk /code/src
+ADD .  /code/
 RUN ["ls"]
-RUN ["mvn", "package"]
-RUN ls -a target
-EXPOSE 8113
+RUN ["make"]
 CMD ["java","-Dspring.profiles.active=dev","-jar","target/ha-authcode-generation-service.jar"]
