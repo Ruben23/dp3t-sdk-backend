@@ -5,6 +5,6 @@ RUN apt-get -y update  && apt-get install default-jre default-jdk openjdk-8-jdk 
 
 WORKDIR /code
 ADD . /code/
-RUN cargo install rusty-swagger -y && cd dpppt-backend-sdk && mvn install
+RUN cd dpppt-backend-sdk && mvn install
 EXPOSE 8113
 CMD ["java","-Dspring.profiles.active=dev","-jar","target/ha-authcode-generation-service.jar"]
