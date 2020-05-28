@@ -14,11 +14,11 @@ no: clean updateproject updatedoc swagger la la2
 docker-build: updateproject docker
 doc: updatedoc swagger la la2 la3
 
-updateproject:
-	mvn -f dpppt-backend-sdk/pom.xml install
-updatedoc:
-	mvn springboot-swagger-3:springboot-swagger-3 -f dpppt-backend-sdk/dpppt-backend-sdk-ws/pom.xml
-	cp dpppt-backend-sdk/dpppt-backend-sdk-ws/generated/swagger/swagger.yaml documentation/yaml/sdk.yaml
+#updateproject:
+#	mvn -f dpppt-backend-sdk/pom.xml install
+#updatedoc:
+#	mvn springboot-swagger-3:springboot-swagger-3 -f dpppt-backend-sdk/dpppt-backend-sdk-ws/pom.xml
+#	cp dpppt-backend-sdk/dpppt-backend-sdk-ws/generated/swagger/swagger.yaml documentation/yaml/sdk.yaml
 
 swagger:
 	cd documentation; $(RUSTY_SWAGGER) --file ../dpppt-backend-sdk/dpppt-backend-sdk-ws/generated/swagger/swagger.yaml
