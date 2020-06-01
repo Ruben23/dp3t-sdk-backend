@@ -11,17 +11,12 @@
 package org.dpppt.backend.sdk.ws.config;
 
 import java.security.KeyPair;
-import java.security.KeyPairGenerator;
-import java.security.spec.ECGenParameterSpec;
 import java.time.Duration;
 import java.util.List;
-import java.util.Map;
 
 import javax.sql.DataSource;
 
 import org.dpppt.backend.sdk.data.DPPPTDataService;
-import org.dpppt.backend.sdk.data.EtagGenerator;
-import org.dpppt.backend.sdk.data.EtagGeneratorInterface;
 import org.dpppt.backend.sdk.data.JDBCDPPPTDataServiceImpl;
 import org.dpppt.backend.sdk.data.JDBCRedeemDataServiceImpl;
 import org.dpppt.backend.sdk.data.RedeemDataService;
@@ -48,8 +43,10 @@ import org.springframework.http.converter.json.MappingJackson2HttpMessageConvert
 import org.springframework.http.converter.protobuf.ProtobufHttpMessageConverter;
 import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.scheduling.annotation.SchedulingConfigurer;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.scheduling.config.IntervalTask;
 import org.springframework.scheduling.config.ScheduledTaskRegistrar;
+import org.springframework.web.servlet.config.annotation.AsyncSupportConfigurer;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
@@ -94,7 +91,7 @@ public abstract class WSBaseConfig implements SchedulingConfigurer, WebMvcConfig
 	@Value("${ws.app.source}")
 	String appSource;
 
-	@Value("${ws.app.gaen.region: ch}")
+	@Value("${ws.app.gaen.region:ch}")
 	String gaenRegion;
 
 	@Value("${ws.app.gaen.key_size: 16}")
@@ -102,17 +99,16 @@ public abstract class WSBaseConfig implements SchedulingConfigurer, WebMvcConfig
 	@Value("${ws.app.key_size: 32}")
 	int keySizeBytes;
 
-	@Value("${ws.app.ios.bundleId: org.dppt.ios.demo}")
+	@Value("${ws.app.ios.bundleId:org.dppt.ios.demo}")
 	String bundleId;
-	@Value("${ws.app.android.packageName: org.dpppt.android.demo}")
+	@Value("${ws.app.android.packageName:org.dpppt.android.demo}")
 	String packageName;
-	@Value("${ws.app.gaen.keyVersion: v1}")
+	@Value("${ws.app.gaen.keyVersion:v1}")
 	String keyVersion;
-	@Value("${ws.app.gaen.keyIdentifier: org.gaen.v1}")
+	@Value("${ws.app.gaen.keyIdentifier:228}")
 	String keyIdentifier;
 	@Value("${ws.app.gaen.algorithm:1.2.840.10045.4.3.2}")
 	String gaenAlgorithm;
-
 
 	@Autowired(required = false)
 	ValidateRequest requestValidator;
@@ -125,13 +121,29 @@ public abstract class WSBaseConfig implements SchedulingConfigurer, WebMvcConfig
 	KeyVault keyVault;
 
 	final SignatureAlgorithm algorithm = SignatureAlgorithm.ES256;
+	
+	public String getBundleId() {
+		return this.bundleId;
+	}
+
+	public String getPackageName() {
+		return this.packageName;
+	}
+
+	public String getKeyVersion() {
+		return this.keyVersion;
+	}
+	
+	public String getKeyIdentifier() {
+		return this.keyIdentifier;
+	}
 
 	@Bean
 	public ProtoSignature gaenSigner() {
 		try {
-			return new ProtoSignature(gaenAlgorithm, keyVault.get("gaen") ,bundleId,packageName,keyVersion, keyIdentifier, gaenRegion, Duration.ofMillis(batchLength));
-		}
-		catch(Exception ex) {
+			return new ProtoSignature(gaenAlgorithm, keyVault.get("gaen"), getBundleId(), getPackageName(), getKeyVersion(),
+					getKeyIdentifier(), gaenRegion, Duration.ofMillis(batchLength));
+		} catch (Exception ex) {
 			throw new RuntimeException("Cannot initialize signer for protobuf");
 		}
 	}
@@ -142,32 +154,46 @@ public abstract class WSBaseConfig implements SchedulingConfigurer, WebMvcConfig
 		if (theValidator == null) {
 			theValidator = new NoValidateRequest();
 		}
-		return new DPPPTController(dppptSDKDataService(), etagGenerator(), appSource, exposedListCacheControl,
-				theValidator, new ValidationUtils(keySizeBytes, Duration.ofDays(retentionDays), batchLength), batchLength, requestTime);
+		return new DPPPTController(dppptSDKDataService(), appSource, exposedListCacheControl,
+				theValidator, dpptValidationUtils(), batchLength, requestTime);
 	}
 
 	@Bean
-	public GaenController gaenController(){
+	public ValidationUtils dpptValidationUtils() {
+		return new ValidationUtils(keySizeBytes, Duration.ofDays(retentionDays), batchLength);
+	}
+
+	@Bean
+	public ValidationUtils gaenValidationUtils() {
+		return new ValidationUtils(gaenKeySizeBytes, Duration.ofDays(retentionDays), batchLength);
+	}
+
+	@Bean
+	public GaenController gaenController() {
 		ValidateRequest theValidator = gaenRequestValidator;
 		if (theValidator == null) {
-			theValidator = new NoValidateRequest();
+			theValidator = backupValidator();
 		}
-		return new GaenController(gaenDataService(), etagGenerator(), theValidator, gaenSigner(),
-				new ValidationUtils(gaenKeySizeBytes, Duration.ofDays(retentionDays), batchLength),
+		return new GaenController(gaenDataService(), theValidator, gaenSigner(), gaenValidationUtils(),
 				Duration.ofMillis(batchLength), Duration.ofMillis(requestTime),
-				Duration.ofMinutes(exposedListCacheControl), keyVault.get("nextDayJWT").getPrivate(), gaenRegion);
+				Duration.ofMinutes(exposedListCacheControl), keyVault.get("nextDayJWT").getPrivate());
+	}
+
+	@Bean
+	ValidateRequest backupValidator() {
+		return new NoValidateRequest();
 	}
 
 	@Bean
 	public DPPPTDataService dppptSDKDataService() {
 		return new JDBCDPPPTDataServiceImpl(getDbType(), dataSource());
 	}
-	
+
 	@Bean
 	public GAENDataService gaenDataService() {
 		return new JDBCGAENDataServiceImpl(getDbType(), dataSource());
 	}
-	
+
 	@Bean
 	public RedeemDataService redeemDataService() {
 		return new JDBCRedeemDataServiceImpl(dataSource());
@@ -188,11 +214,6 @@ public abstract class WSBaseConfig implements SchedulingConfigurer, WebMvcConfig
 	}
 
 	@Bean
-	public EtagGeneratorInterface etagGenerator() {
-		return new EtagGenerator();
-	}
-
-	@Bean
 	public ResponseWrapperFilter hashFilter() {
 		return new ResponseWrapperFilter(keyVault.get("hashFilter"), retentionDays, protectedHeaders, setDebugHeaders);
 	}
@@ -202,6 +223,19 @@ public abstract class WSBaseConfig implements SchedulingConfigurer, WebMvcConfig
 
 		return Keys.keyPairFor(algorithm);
 	}
+
+	@Override    
+	public void configureAsyncSupport(AsyncSupportConfigurer configurer) {
+		configurer.setTaskExecutor(mvcTaskExecutor());
+		configurer.setDefaultTimeout(5_000);
+  }
+  @Bean
+  public ThreadPoolTaskExecutor mvcTaskExecutor() {
+		ThreadPoolTaskExecutor taskExecutor = new ThreadPoolTaskExecutor();
+		taskExecutor.setThreadNamePrefix("mvc-task-");
+		taskExecutor.setMaxPoolSize(1000);
+		return taskExecutor;
+  }
 
 	@Override
 	public void configureTasks(ScheduledTaskRegistrar taskRegistrar) {

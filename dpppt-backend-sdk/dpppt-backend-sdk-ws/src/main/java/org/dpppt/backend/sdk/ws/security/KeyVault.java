@@ -52,7 +52,7 @@ public class KeyVault {
 			externalPublicProviders.add(method);
 			return true;
 		} catch (NoSuchMethodException | SecurityException e) {
-			e.printStackTrace();
+			logger.error("Exception registering new public encoding provider", e);
 			return false;
 		}
 	}
@@ -68,7 +68,7 @@ public class KeyVault {
 			externalPrivateProviders.add(method);
 			return true;
 		} catch (NoSuchMethodException | SecurityException e) {
-			e.printStackTrace();
+			logger.error("Exception registering new private encoding provider", e);
 			return false;
 		}
 	}
@@ -90,9 +90,6 @@ public class KeyVault {
 
 		for (KeyVaultEntry entry : entries) {
 			var kp = loadKeyPairFromString(entry);
-			if (kp == null)
-				continue;
-
 			this.pairVault.put(entry.pairKey, kp);
 		}
 	}
@@ -137,8 +134,9 @@ public class KeyVault {
 			} catch (IllegalAccessException | IllegalArgumentException | InvocationTargetException e) {
 				logger.warn("externalPrivateProvider failed with reflection error");
 			}
-			if (key != null)
+			if (key != null) {
 				return key;
+			}
 		}
 		throw new PrivateKeyNoSuitableEncodingFoundException();
 	}
@@ -148,6 +146,7 @@ public class KeyVault {
 			return KeyFactory.getInstance(algorithm)
 					.generatePrivate(new PKCS8EncodedKeySpec(Base64.getDecoder().decode(privatePart)));
 		} catch (InvalidKeySpecException | NoSuchAlgorithmException e) {
+			logger.error("Exception loading private key from java encoding", e);
 			return null;
 		}
 	}
@@ -157,8 +156,10 @@ public class KeyVault {
 			var reader = new StringReader(privatePart);
 			var readerPem = new PemReader(reader);
 			var obj = readerPem.readPemObject();
+			readerPem.close();
 			return KeyFactory.getInstance(algorithm).generatePrivate(new PKCS8EncodedKeySpec(obj.getContent()));
 		} catch (InvalidKeySpecException | NoSuchAlgorithmException | IOException e) {
+			logger.error("Exception loading private key from PEM", e);
 			return null;
 		}
 	}
@@ -172,8 +173,9 @@ public class KeyVault {
 			} catch (IllegalAccessException | IllegalArgumentException | InvocationTargetException e) {
 				logger.warn("externalPublicProvider failed with reflection error");
 			}
-			if (key != null)
+			if (key != null) {
 				return key;
+			}
 		}
 		throw new PublicKeyNoSuitableEncodingFoundException();
 	}
@@ -183,6 +185,7 @@ public class KeyVault {
 			return KeyFactory.getInstance(algorithm)
 					.generatePublic(new X509EncodedKeySpec(Base64.getDecoder().decode(publicPart)));
 		} catch (InvalidKeySpecException | NoSuchAlgorithmException e) {
+			logger.error("Exception loading public key from java encoding", e);
 			return null;
 		}
 	}
@@ -192,8 +195,10 @@ public class KeyVault {
 			var reader = new StringReader(publicPart);
 			var readerPem = new PemReader(reader);
 			var obj = readerPem.readPemObject();
+			readerPem.close();
 			return KeyFactory.getInstance(algorithm).generatePublic(new X509EncodedKeySpec(obj.getContent()));
 		} catch (InvalidKeySpecException | NoSuchAlgorithmException | IOException e) {
+			logger.error("Exception loading public key from PEM", e);
 			return null;
 		}
 	}
@@ -203,6 +208,7 @@ public class KeyVault {
 			return CertificateFactory.getInstance("X.509")
 					.generateCertificate(new ByteArrayInputStream(publicPart.getBytes())).getPublicKey();
 		} catch (CertificateException e) {
+			logger.error("Exception loading public key from X509 certificate", e);
 			return null;
 		}
 	}
@@ -232,8 +238,12 @@ public class KeyVault {
 	}
 
 	public static class PrivateKeyNoSuitableEncodingFoundException extends Exception {
+
+		private static final long serialVersionUID = 1623575762871663224L;
 	}
 
 	public static class PublicKeyNoSuitableEncodingFoundException extends Exception {
+
+		private static final long serialVersionUID = -1286647270505904967L;
 	}
 }
