@@ -87,10 +87,14 @@ public class WSDevConfig extends WSBaseConfig {
 	}
 
     String getPrivateKey() {
+	    System.out.println("bororo  privateKey");
+	     System.out.println(privateKey);
         return new String(Base64.getDecoder().decode(privateKey));
     }
 
     String getPublicKey() {
+	    System.out.println("bororo  publicKey");
+	     System.out.println(publicKey);
         return new String(Base64.getDecoder().decode(publicKey));
     }
 
