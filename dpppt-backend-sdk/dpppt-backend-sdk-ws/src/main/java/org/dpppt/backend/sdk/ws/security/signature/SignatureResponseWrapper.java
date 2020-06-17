@@ -24,6 +24,7 @@ import java.time.ZoneOffset;
 import java.util.Base64;
 import java.util.Date;
 import java.util.List;
+import java.util.Map;
 
 import javax.servlet.ServletOutputStream;
 import javax.servlet.WriteListener;
@@ -33,6 +34,7 @@ import javax.servlet.http.HttpServletResponseWrapper;
 import org.apache.commons.codec.binary.Hex;
 import org.bouncycastle.util.io.pem.PemObject;
 import org.bouncycastle.util.io.pem.PemWriter;
+import org.springframework.http.HttpStatus;
 import org.springframework.util.Base64Utils;
 
 import io.jsonwebtoken.Claims;
@@ -117,6 +119,16 @@ public class SignatureResponseWrapper extends HttpServletResponseWrapper {
 	}
 
 	private void setSignature() throws IOException {
+		switch(HttpStatus.valueOf(this.getStatus())) {
+			//only setsignature for 200 and 204
+			case OK:
+			case NO_CONTENT:
+			break;
+
+			default:
+				return;
+		}
+		
 		byte[] theHash = this.getHash();
 
 		Claims claims = Jwts.claims();
@@ -149,7 +161,6 @@ public class SignatureResponseWrapper extends HttpServletResponseWrapper {
 			this.setHeader(HEADER_PUBLIC_KEY, getPublicKeyAsPEM());
 		}
 		this.setHeader(HEADER_SIGNATURE, signature);
-
 	}
 
 	private String getPublicKeyAsPEM() throws IOException {

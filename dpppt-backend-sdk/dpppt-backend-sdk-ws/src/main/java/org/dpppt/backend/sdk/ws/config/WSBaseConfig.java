@@ -12,7 +12,10 @@ package org.dpppt.backend.sdk.ws.config;
 
 import java.security.KeyPair;
 import java.time.Duration;
+import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Map;
+import java.util.TimeZone;
 
 import javax.sql.DataSource;
 
@@ -20,11 +23,13 @@ import org.dpppt.backend.sdk.data.DPPPTDataService;
 import org.dpppt.backend.sdk.data.JDBCDPPPTDataServiceImpl;
 import org.dpppt.backend.sdk.data.JDBCRedeemDataServiceImpl;
 import org.dpppt.backend.sdk.data.RedeemDataService;
+import org.dpppt.backend.sdk.data.gaen.FakeKeyService;
 import org.dpppt.backend.sdk.data.gaen.GAENDataService;
 import org.dpppt.backend.sdk.data.gaen.JDBCGAENDataServiceImpl;
 import org.dpppt.backend.sdk.ws.controller.DPPPTController;
 import org.dpppt.backend.sdk.ws.controller.GaenController;
 import org.dpppt.backend.sdk.ws.filter.ResponseWrapperFilter;
+import org.dpppt.backend.sdk.ws.interceptor.HeaderInjector;
 import org.dpppt.backend.sdk.ws.security.KeyVault;
 import org.dpppt.backend.sdk.ws.security.NoValidateRequest;
 import org.dpppt.backend.sdk.ws.security.ValidateRequest;
@@ -41,12 +46,17 @@ import org.springframework.context.annotation.Lazy;
 import org.springframework.http.converter.HttpMessageConverter;
 import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
 import org.springframework.http.converter.protobuf.ProtobufHttpMessageConverter;
+import org.springframework.jdbc.datasource.embedded.EmbeddedDatabaseBuilder;
+import org.springframework.jdbc.datasource.embedded.EmbeddedDatabaseType;
 import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.scheduling.annotation.SchedulingConfigurer;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
+import org.springframework.scheduling.config.CronTask;
 import org.springframework.scheduling.config.IntervalTask;
 import org.springframework.scheduling.config.ScheduledTaskRegistrar;
+import org.springframework.scheduling.support.CronTrigger;
 import org.springframework.web.servlet.config.annotation.AsyncSupportConfigurer;
+import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
@@ -70,7 +80,10 @@ public abstract class WSBaseConfig implements SchedulingConfigurer, WebMvcConfig
 
 	public abstract String getDbType();
 
-	@Value("${ws.exposedlist.cachecontrol: 5}")
+	@Value("#{${ws.security.headers: {'X-Content-Type-Options':'nosniff', 'X-Frame-Options':'DENY','X-Xss-Protection':'1; mode=block'}}}")
+	Map<String,String> additionalHeaders;
+
+	@Value("${ws.exposedlist.cachecontrol: 300000}")
 	int exposedListCacheControl;
 
 	@Value("${ws.headers.protected:}")
@@ -79,7 +92,13 @@ public abstract class WSBaseConfig implements SchedulingConfigurer, WebMvcConfig
 	@Value("${ws.headers.debug: false}")
 	boolean setDebugHeaders;
 
-	@Value("${ws.retentiondays: 21}")
+	@Value("${ws.gaen.randomkeysenabled: false}")
+	boolean randomkeysenabled;
+
+	@Value("${ws.gaen.randomkeyamount: 10}")
+	int randomkeyamount;
+
+	@Value("${ws.retentiondays: 14}")
 	int retentionDays;
 
 	@Value("${ws.exposedlist.batchlength: 7200000}")
@@ -121,7 +140,7 @@ public abstract class WSBaseConfig implements SchedulingConfigurer, WebMvcConfig
 	KeyVault keyVault;
 
 	final SignatureAlgorithm algorithm = SignatureAlgorithm.ES256;
-	
+
 	public String getBundleId() {
 		return this.bundleId;
 	}
@@ -133,16 +152,32 @@ public abstract class WSBaseConfig implements SchedulingConfigurer, WebMvcConfig
 	public String getKeyVersion() {
 		return this.keyVersion;
 	}
-	
+
 	public String getKeyIdentifier() {
 		return this.keyIdentifier;
 	}
 
 	@Bean
+	public FakeKeyService fakeKeyService() {
+		try {
+			DataSource fakeDataSource = new EmbeddedDatabaseBuilder().generateUniqueName(true)
+					.setType(EmbeddedDatabaseType.HSQL).build();
+			Flyway flyWay = Flyway.configure().dataSource(fakeDataSource).locations("classpath:/db/migration/hsqldb")
+					.load();
+			flyWay.migrate();
+			GAENDataService fakeGaenService = new JDBCGAENDataServiceImpl("hsql", fakeDataSource,Duration.ofMillis(batchLength));
+			return new FakeKeyService(fakeGaenService, Integer.valueOf(randomkeyamount),
+					Integer.valueOf(gaenKeySizeBytes), Duration.ofDays(retentionDays), randomkeysenabled);
+		} catch (Exception ex) {
+			throw new RuntimeException("FakeKeyService could not be instantiated", ex);
+		}
+	}
+
+	@Bean
 	public ProtoSignature gaenSigner() {
 		try {
-			return new ProtoSignature(gaenAlgorithm, keyVault.get("gaen"), getBundleId(), getPackageName(), getKeyVersion(),
-					getKeyIdentifier(), gaenRegion, Duration.ofMillis(batchLength));
+			return new ProtoSignature(gaenAlgorithm, keyVault.get("gaen"), getBundleId(), getPackageName(),
+					getKeyVersion(), getKeyIdentifier(), gaenRegion, Duration.ofMillis(batchLength));
 		} catch (Exception ex) {
 			throw new RuntimeException("Cannot initialize signer for protobuf");
 		}
@@ -154,8 +189,8 @@ public abstract class WSBaseConfig implements SchedulingConfigurer, WebMvcConfig
 		if (theValidator == null) {
 			theValidator = new NoValidateRequest();
 		}
-		return new DPPPTController(dppptSDKDataService(), appSource, exposedListCacheControl,
-				theValidator, dpptValidationUtils(), batchLength, requestTime);
+		return new DPPPTController(dppptSDKDataService(), appSource, exposedListCacheControl, theValidator,
+				dpptValidationUtils(), batchLength, requestTime);
 	}
 
 	@Bean
@@ -174,9 +209,9 @@ public abstract class WSBaseConfig implements SchedulingConfigurer, WebMvcConfig
 		if (theValidator == null) {
 			theValidator = backupValidator();
 		}
-		return new GaenController(gaenDataService(), theValidator, gaenSigner(), gaenValidationUtils(),
-				Duration.ofMillis(batchLength), Duration.ofMillis(requestTime),
-				Duration.ofMinutes(exposedListCacheControl), keyVault.get("nextDayJWT").getPrivate());
+		return new GaenController(gaenDataService(), fakeKeyService(), theValidator, gaenSigner(),
+				gaenValidationUtils(), Duration.ofMillis(batchLength), Duration.ofMillis(requestTime),
+				Duration.ofMillis(exposedListCacheControl), keyVault.get("nextDayJWT").getPrivate());
 	}
 
 	@Bean
@@ -191,7 +226,7 @@ public abstract class WSBaseConfig implements SchedulingConfigurer, WebMvcConfig
 
 	@Bean
 	public GAENDataService gaenDataService() {
-		return new JDBCGAENDataServiceImpl(getDbType(), dataSource());
+		return new JDBCGAENDataServiceImpl(getDbType(), dataSource(), Duration.ofMillis(batchLength));
 	}
 
 	@Bean
@@ -217,6 +252,10 @@ public abstract class WSBaseConfig implements SchedulingConfigurer, WebMvcConfig
 	public ResponseWrapperFilter hashFilter() {
 		return new ResponseWrapperFilter(keyVault.get("hashFilter"), retentionDays, protectedHeaders, setDebugHeaders);
 	}
+	@Bean
+	public HeaderInjector securityHeaderInjector(){
+		return new HeaderInjector(additionalHeaders);
+	}
 
 	public KeyPair getKeyPair(SignatureAlgorithm algorithm) {
 		logger.warn("USING FALLBACK KEYPAIR. WONT'T PERSIST APP RESTART AND PROBABLY DOES NOT HAVE ENOUGH ENTROPY.");
@@ -224,18 +263,19 @@ public abstract class WSBaseConfig implements SchedulingConfigurer, WebMvcConfig
 		return Keys.keyPairFor(algorithm);
 	}
 
-	@Override    
+	@Override
 	public void configureAsyncSupport(AsyncSupportConfigurer configurer) {
 		configurer.setTaskExecutor(mvcTaskExecutor());
 		configurer.setDefaultTimeout(5_000);
-  }
-  @Bean
-  public ThreadPoolTaskExecutor mvcTaskExecutor() {
+	}
+
+	@Bean
+	public ThreadPoolTaskExecutor mvcTaskExecutor() {
 		ThreadPoolTaskExecutor taskExecutor = new ThreadPoolTaskExecutor();
 		taskExecutor.setThreadNamePrefix("mvc-task-");
 		taskExecutor.setMaxPoolSize(1000);
 		return taskExecutor;
-  }
+	}
 
 	@Override
 	public void configureTasks(ScheduledTaskRegistrar taskRegistrar) {
@@ -246,5 +286,12 @@ public abstract class WSBaseConfig implements SchedulingConfigurer, WebMvcConfig
 			redeemDataService().cleanDB(Duration.ofDays(1));
 			logger.info("DB cleanup up");
 		}, 60 * 60 * 1000L));
+
+		var trigger = new CronTrigger("0 0 2 * * *", TimeZone.getTimeZone(ZoneOffset.UTC));
+		taskRegistrar.addCronTask(new CronTask(() -> fakeKeyService().updateFakeKeys(), trigger));
+	}
+	@Override
+	public void addInterceptors(InterceptorRegistry registry) {
+		registry.addInterceptor(securityHeaderInjector());
 	}
 }
