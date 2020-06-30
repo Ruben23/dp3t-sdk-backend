@@ -1,0 +1,34 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backendws
+  namespace: backend
+spec:
+  replicas: 1
+  revisionHistoryLimit: 10
+  selector:
+    matchLabels:
+      app: backendws
+  strategy:
+    rollingUpdate:
+      maxSurge: 25%
+      maxUnavailable: 25%
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app: backendws
+    spec:
+      containers:
+      - image: "registry.nosi.cv/na_nos_mon/backendws:$BUILD_NUMBER"
+        imagePullPolicy: IfNotPresent
+        name: backendws
+        ports:
+        - containerPort: 8080
+          name: backendws
+          protocol: TCP
+      imagePullSecrets:
+      - name: nanosmon
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      terminationGracePeriodSeconds: 30
